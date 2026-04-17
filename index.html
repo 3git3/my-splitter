@@ -2,8 +2,11 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Lossless Splitter Pro</title>
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <title>Lossless Splitter Pro (Fixed)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/coi-serviceworker/0.1.7/coi-serviceworker.min.js"></script>
+    
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
     <style>
         body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; background: #f0f4f8; }
         .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
@@ -13,123 +16,94 @@
         input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
         button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1rem; }
         button:disabled { background: #ccc; cursor: not-allowed; }
-        
-        /* 進捗をわかりやすく */
-        #progressContainer { margin-top: 25px; display: none; }
-        .progress-bar { width: 100%; background: #eee; height: 10px; border-radius: 5px; overflow: hidden; }
-        #innerBar { width: 0%; height: 100%; background: #28a745; transition: width 0.2s; }
-        #statusText { font-size: 0.85rem; color: #007bff; margin-top: 10px; font-weight: bold; text-align: center; }
-        #log { margin-top: 15px; font-size: 10px; color: #888; background: #f9f9f9; padding: 10px; border-radius: 5px; height: 60px; overflow-y: auto; white-space: pre-wrap; border: 1px solid #eee; }
-        .download-area { margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px; }
+        #status { margin-top: 15px; font-size: 0.85rem; color: #007bff; font-weight: bold; text-align: center; }
+        #log { margin-top: 10px; font-size: 10px; color: #888; background: #f9f9f9; padding: 10px; border-radius: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+        .result { margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h1>無劣化分割（高安定版）</h1>
+    <h1>無劣化分割（エラー修正版）</h1>
     <div class="input-group">
-        <label>ファイルを選択 (MP3 / 動画など)</label>
+        <label>ファイルを選択</label>
         <input type="file" id="fileInput">
     </div>
     <div class="input-group">
-        <label>1ファイルあたりの上限サイズ (MB)</label>
+        <label>分割サイズ (MB)</label>
         <input type="number" id="sizeInput" value="24">
     </div>
     <button id="runBtn">分割を開始する</button>
 
-    <div id="progressContainer">
-        <div class="progress-bar"><div id="innerBar"></div></div>
-        <div id="statusText">待機中...</div>
-        <div id="log">ログ: 準備完了</div>
-    </div>
-
-    <div id="result" class="download-area"></div>
+    <div id="status">待機中</div>
+    <div id="log">ログ: 準備完了</div>
+    <div id="result" class="result"></div>
 </div>
 
 <script>
-    // 互換性の高い旧API形式を使用
-    const { createFFmpeg, fetchFile } = FFmpeg;
-    const ffmpeg = createFFmpeg({ 
-        log: true, 
-        mainName: 'main',
-        corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
-    });
+    const { FFmpeg } = FFmpegWasm;
+    const { fetchFile, toBlobURL } = FFmpegUtil;
+    let ffmpeg = null;
 
     const btn = document.getElementById('runBtn');
-    const statusText = document.getElementById('statusText');
-    const innerBar = document.getElementById('innerBar');
+    const status = document.getElementById('status');
     const logEl = document.getElementById('log');
-    const resultEl = document.getElementById('result');
+    const res = document.getElementById('result');
 
-    const addLog = (msg) => {
-        logEl.innerText += `\n${msg}`;
-        logEl.scrollTop = logEl.scrollHeight;
-    };
+    const addLog = (m) => { logEl.innerText += `\n${m}`; logEl.scrollTop = logEl.scrollHeight; };
 
     btn.onclick = async () => {
         const file = document.getElementById('fileInput').files[0];
         const mb = document.getElementById('sizeInput').value;
-        if (!file) return alert("ファイルを選んでください");
+        if (!file) return alert("ファイルを選んでね");
 
         btn.disabled = true;
-        document.getElementById('progressContainer').style.display = 'block';
-        resultEl.innerHTML = '';
-        
+        status.innerText = "エンジン起動中...";
+        res.innerHTML = "";
+
         try {
-            if (!ffmpeg.isLoaded()) {
-                statusText.innerText = "エンジンを起動中... (初回は30秒ほどかかる場合があります)";
-                await ffmpeg.load();
+            if (!ffmpeg) {
+                ffmpeg = new FFmpeg();
+                // ログを画面に出す
+                ffmpeg.on('log', ({ message }) => addLog(message));
+                
+                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                await ffmpeg.load({
+                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                });
             }
 
-            statusText.innerText = "ファイルを読み込み中...";
-            ffmpeg.FS('writeFile', 'input', await fetchFile(file));
+            status.innerText = "データ読み込み中...";
+            await ffmpeg.writeFile('input', await fetchFile(file));
 
-            // 進捗の監視
-            ffmpeg.setProgress(({ ratio }) => {
-                const p = Math.floor(ratio * 100);
-                innerBar.style.width = p + '%';
-                statusText.innerText = `分割中: ${p}%`;
-            });
-
-            statusText.innerText = "分割処理を実行中（無劣化）...";
+            status.innerText = "分割中...（無劣化）";
             const ext = file.name.split('.').pop();
-            const targetBytes = mb * 1024 * 1024;
-
-            // 分割実行
-            await ffmpeg.run(
-                '-i', 'input',
-                '-f', 'segment',
-                '-segment_size', targetBytes.toString(),
-                '-c', 'copy',
-                '-reset_timestamps', '1',
+            
+            await ffmpeg.exec([
+                '-i', 'input', '-f', 'segment',
+                '-segment_size', (mb * 1024 * 1024).toString(),
+                '-c', 'copy', '-reset_timestamps', '1',
                 `output_%03d.${ext}`
-            );
+            ]);
 
-            statusText.innerText = "完了！保存してください。";
-            innerBar.style.width = '100%';
-
-            const files = ffmpeg.FS('readdir', '/');
+            status.innerText = "完了！";
+            const files = await ffmpeg.listDir('/');
             for (const f of files) {
-                if (f.startsWith('output_')) {
-                    const data = ffmpeg.FS('readFile', f);
+                if (f.name.startsWith('output_') && !f.isDir) {
+                    const data = await ffmpeg.readFile(f.name);
                     const url = URL.createObjectURL(new Blob([data.buffer]));
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.download = `split_${f}`;
-                    link.innerText = `💾 ${f} を保存`;
-                    link.style.display = 'block';
-                    link.style.marginBottom = '10px';
-                    resultEl.appendChild(link);
+                    res.innerHTML += `<a href="${url}" download="split_${f.name}" style="display:block; margin-bottom:10px; color:#007bff; font-weight:bold;">💾 ${f.name} を保存</a>`;
                 }
             }
         } catch (e) {
-            console.error(e);
-            statusText.innerText = "エラー発生：ブラウザが対応していないか、ファイルが壊れています。";
-            addLog(e.message);
+            addLog("エラー: " + e.message);
+            status.innerText = "失敗しました";
         } finally {
             btn.disabled = false;
         }
     };
 </script>
+
 </body>
 </html>
