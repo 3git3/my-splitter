@@ -37,12 +37,9 @@ class MediaSplitter {
 
   // ffprobe相当の機能で duration を取得（簡易版）
   async getFileDuration(fileName) {
-    // ffmpeg.wasm のログから duration を抽出する簡易実装
-    // 実際には ffprobe.wasm を使うのが望ましいが、ここでは簡易的にログから取得
     let duration = null;
     const originalLog = this.ffmpeg.setLogger(({ type, message }) => {
       if (type === 'fferr') {
-        // Duration: 00:05:30.12 のような行を探す
         const match = message.match(/Duration: (\d+):(\d+):(\d+\.\d+)/);
         if (match) {
           const hours = parseInt(match[1], 10);
@@ -54,7 +51,6 @@ class MediaSplitter {
     });
 
     try {
-      // 無音・無画質の短い出力を生成してログから duration を取得
       await this.ffmpeg.run('-i', fileName, '-f', 'null', '-');
     } catch (e) {
       // エラーでもログは出るので無視
@@ -62,6 +58,20 @@ class MediaSplitter {
 
     this.ffmpeg.setLogger(originalLog);
     return duration;
+  }
+
+  // 仮想ファイルシステム内のファイルをブラウザからダウンロード
+  downloadFileFromFS(fileName, downloadName) {
+    const data = this.ffmpeg.FS('readFile', fileName);
+    const blob = new Blob([data.buffer]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = downloadName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   async startSplit() {
@@ -117,6 +127,8 @@ class MediaSplitter {
 
       this.updateProgress(`分割中... (0/${numParts})`, 0);
 
+      const outputFiles = [];
+
       for (let i = 0; i < numParts; i++) {
         const startTime = i * targetDurationSec;
         const outName = `part${i + 1}_${file.name}`;
@@ -135,23 +147,27 @@ class MediaSplitter {
           outName
         );
 
+        outputFiles.push(outName);
         this.updateProgress(`分割中... (${i + 1}/${numParts})`, ((i + 1) / numParts) * 100);
       }
 
-      this.updateProgress("分割完了", 100);
+      this.updateProgress("分割完了。ダウンロード中...", 100);
 
-      // 仮想ファイルシステム内のファイル一覧を表示（確認用）
-      const files = this.ffmpeg.FS('readdir', '/');
-      const outputFiles = files.filter(f => f.startsWith('part'));
-      console.log('分割されたファイル:', outputFiles);
+      // 分割ファイルを順次ダウンロード
+      for (const outName of outputFiles) {
+        this.downloadFileFromFS(outName, outName);
+        // メモリ解放（任意）
+        this.ffmpeg.FS('unlink', outName);
+      }
 
-      alert(`分割が完了しました。\nコンソールに出力ファイル名が表示されています。`);
+      alert(`分割が完了しました。\n${outputFiles.length}個のファイルをダウンロードしました。`);
 
     } catch (err) {
       console.error(err);
       alert('エラーが発生しました: ' + err.message);
     } finally {
       btn.disabled = false;
+      this.updateProgress("準備中...", 0);
     }
   }
 }
