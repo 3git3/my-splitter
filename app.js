@@ -1,236 +1,165 @@
-/* =====================================================================
-   無劣化メディア分割ツール — app.js（修正版）
-   FFmpeg corePath を 0.11.6 に統一済み
-   SharedArrayBuffer 対応（coi-serviceworker.js 前提）
-   ===================================================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  const { createFFmpeg, fetchFile } = FFmpeg;
 
-(function () {
-  "use strict";
-
-  function $(id) {
-    var el = document.getElementById(id);
-    if (!el) console.error("[app] 要素が見つかりません: #" + id);
-    return el;
-  }
-
-  var fileInput    = $("file-input");
-  var fileInfo     = $("file-info");
-  var mbInput      = $("mb-input");
-  var splitBtn     = $("split-btn");
-  var progressCard = $("progress-card");
-  var progText     = $("prog-text");
-  var progPct      = $("prog-pct");
-  var progFill     = $("prog-fill");
-  var logBox       = $("log-box");
-  var resultCard   = $("result-card");
-  var resultBody   = $("result-body");
-  var errorCard    = $("error-card");
-  var errorBody    = $("error-body");
-
-  var ffmpeg = null;
-  var ffmpegLoaded = false;
-
-  fileInput.addEventListener("change", function () {
-    var file = fileInput.files[0];
-    if (!file) { fileInfo.classList.remove("show"); return; }
-    var mb = (file.size / 1024 / 1024).toFixed(2);
-    fileInfo.textContent = file.name + "  /  " + mb + " MB";
-    fileInfo.classList.add("show");
+  // FFmpegの初期化（ローカルのcoreファイルを参照）
+  const ffmpeg = createFFmpeg({
+    log: true,
+    corePath: './ffmpeg-core.js'
   });
 
-  function setProgress(text, pct) {
-    if (progText) progText.textContent = text;
-    if (progPct)  progPct.textContent  = Math.round(pct) + "%";
-    if (progFill) progFill.style.width = pct + "%";
-  }
+  const fileInput = document.getElementById('file-input');
+  const fileInfo = document.getElementById('file-info');
+  const mbInput = document.getElementById('mb-input');
+  const splitBtn = document.getElementById('split-btn');
+  const progressCard = document.getElementById('progress-card');
+  const progText = document.getElementById('prog-text');
+  const progPct = document.getElementById('prog-pct');
+  const progFill = document.getElementById('prog-fill');
+  const logBox = document.getElementById('log-box');
+  const resultCard = document.getElementById('result-card');
+  const resultBody = document.getElementById('result-body');
 
-  function addLog(line) {
-    if (!logBox) return;
-    logBox.textContent += line + "\n";
+  let targetFile = null;
+
+  // ログ出力用関数
+  function addLog(msg) {
+    logBox.textContent += msg + '\n';
     logBox.scrollTop = logBox.scrollHeight;
   }
 
-  function resetUI() {
-    if (resultCard) resultCard.classList.remove("show");
-    if (errorCard)  errorCard.classList.remove("show");
-    if (logBox)     logBox.textContent = "";
-    setProgress("準備中...", 0);
+  // プログレスバー更新用関数
+  function setProgress(text, pct) {
+    progText.textContent = text;
+    progPct.textContent = Math.round(pct) + '%';
+    progFill.style.width = pct + '%';
   }
 
-  /* --------------------------------------------------------------
-     ★ 修正ポイント：corePath を 0.11.6 に統一
-     -------------------------------------------------------------- */
-  function loadFFmpeg() {
-    return new Promise(function (resolve, reject) {
-      if (ffmpegLoaded) { resolve(); return; }
-
-      if (typeof FFmpeg === "undefined" || !FFmpeg.createFFmpeg) {
-        reject(new Error(
-          "FFmpeg ライブラリが読み込まれていません。\n" +
-          "ページをリロードしてもう一度お試しください。"
-        ));
-        return;
-      }
-
-      ffmpeg = FFmpeg.createFFmpeg({
-        log: false,
-        corePath: "https://unpkg.com/@ffmpeg/core@0.11.6/dist/ffmpeg-core.js?v=2"
-      });
-
-      setProgress("FFmpeg をロード中...", 5);
-      addLog("[info] ffmpeg-core を読み込んでいます...");
-
-      ffmpeg.load()
-        .then(function () {
-          ffmpegLoaded = true;
-          addLog("[info] FFmpeg 準備完了");
-          resolve();
-        })
-        .catch(reject);
-    });
-  }
-
-  function getDuration(fileName) {
-    return new Promise(function (resolve) {
-      var duration = null;
-
-      ffmpeg.setLogger(function (obj) {
-        var message = obj.message || "";
-        var m = message.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
-        if (m) {
-          var h   = parseInt(m[1], 10);
-          var min = parseInt(m[2], 10);
-          var sec = parseFloat(m[3]);
-          duration = h * 3600 + min * 60 + sec;
-          addLog("[info] 長さ検出: " + duration.toFixed(2) + "s");
-        }
-      });
-
-      ffmpeg.run("-i", fileName, "-f", "null", "-")
-        .catch(function () {})
-        .finally(function () {
-          ffmpeg.setLogger(function () {});
-          resolve(duration);
-        });
-    });
-  }
-
-  function downloadFromFS(fsName, downloadName) {
-    var data = ffmpeg.FS("readFile", fsName);
-    var blob = new Blob([data.buffer]);
-    var url  = URL.createObjectURL(blob);
-    var a    = document.createElement("a");
-    a.href     = url;
-    a.download = downloadName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
-  }
-
-  function sleep(ms) {
-    return new Promise(function (r) { setTimeout(r, ms); });
-  }
-
-  splitBtn.addEventListener("click", function () {
-    (async function () {
-
-      resetUI();
-
-      var file = fileInput.files[0];
-      if (!file) { alert("ファイルを選択してください。"); return; }
-
-      var mb = parseInt(mbInput.value, 10);
-      if (!mb || mb <= 0) { alert("MB には正の整数を入力してください。"); return; }
-
+  // ファイル選択時の処理
+  fileInput.addEventListener('change', (e) => {
+    targetFile = e.target.files[0];
+    if (!targetFile) {
+      fileInfo.classList.add('hidden');
       splitBtn.disabled = true;
-      progressCard.classList.add("show");
-
-      try {
-        await loadFFmpeg();
-
-        setProgress("ファイルを読み込み中...", 10);
-        var fileSizeMB = file.size / 1024 / 1024;
-        addLog("[info] 書き込み中: " + file.name);
-
-        ffmpeg.FS("writeFile", file.name, await FFmpeg.fetchFile(file));
-
-        if (fileSizeMB <= mb) {
-          alert("ファイルサイズが指定値以下です。分割の必要はありません。");
-          splitBtn.disabled = false;
-          return;
-        }
-
-        setProgress("メディア情報を取得中...", 20);
-        var duration = await getDuration(file.name);
-
-        if (!duration || duration <= 0) {
-          throw new Error("ファイルの長さを取得できませんでした。");
-        }
-
-        var targetBytes      = mb * 1024 * 1024;
-        var estimatedBps     = (file.size * 8) / duration;
-        var chunkDurationSec = (targetBytes * 8) / estimatedBps;
-        var numParts         = Math.ceil(duration / chunkDurationSec);
-
-        addLog("[info] 分割数=" + numParts);
-
-        var ext      = file.name.split(".").pop();
-        var baseName = file.name.slice(0, -(ext.length + 1));
-        var outputs  = [];
-
-        for (var i = 0; i < numParts; i++) {
-          var startSec = i * chunkDurationSec;
-          var pad      = String(i + 1).padStart(3, "0");
-          var outName  = baseName + "_part" + pad + "." + ext;
-          var pct      = 25 + (i / numParts) * 70;
-
-          setProgress("分割中... (" + (i + 1) + " / " + numParts + ")", pct);
-          addLog("[split] " + outName);
-
-          var args = [
-            "-ss", startSec.toFixed(6),
-            "-i",  file.name,
-            "-c",  "copy",
-            "-avoid_negative_ts", "make_zero",
-          ];
-
-          if (i < numParts - 1) {
-            args.push("-t", chunkDurationSec.toFixed(6));
-          }
-
-          args.push(outName);
-          await ffmpeg.run.apply(ffmpeg, args);
-          outputs.push(outName);
-        }
-
-        setProgress("ダウンロード中...", 97);
-        addLog("[info] ダウンロード開始");
-
-        for (var j = 0; j < outputs.length; j++) {
-          downloadFromFS(outputs[j], outputs[j]);
-          try { ffmpeg.FS("unlink", outputs[j]); } catch (e2) {}
-          await sleep(350);
-        }
-
-        try { ffmpeg.FS("unlink", file.name); } catch (e3) {}
-
-        setProgress("完了", 100);
-        var lines = [outputs.length + " 個のファイルに分割しました。"];
-        outputs.forEach(function (n, idx) { lines.push("  " + (idx + 1) + ". " + n); });
-        resultBody.textContent = lines.join("\n");
-        resultCard.classList.add("show");
-
-      } catch (err) {
-        console.error(err);
-        errorBody.textContent = String(err.message || err);
-        errorCard.classList.add("show");
-        addLog("[error] " + String(err.message || err));
-      } finally {
-        splitBtn.disabled = false;
-      }
-
-    })();
+      return;
+    }
+    const mb = (targetFile.size / 1024 / 1024).toFixed(2);
+    fileInfo.textContent = `選択中: ${targetFile.name} (${mb} MB)`;
+    fileInfo.classList.remove('hidden');
+    splitBtn.disabled = false;
   });
 
-})();
+  // ダウンロードリンク生成関数
+  function createDownloadLink(fileName, data) {
+    const url = URL.createObjectURL(new Blob([data.buffer]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.textContent = `⬇️ ${fileName} をダウンロード`;
+    a.style.display = 'block';
+    a.style.marginTop = '10px';
+    resultBody.appendChild(a);
+  }
+
+  // 分割ボタン押下時の処理
+  splitBtn.addEventListener('click', async () => {
+    if (!targetFile) return;
+
+    const targetMB = parseFloat(mbInput.value);
+    if (isNaN(targetMB) || targetMB <= 0) {
+      alert("正しいMBを入力してください");
+      return;
+    }
+
+    splitBtn.disabled = true;
+    progressCard.classList.remove('hidden');
+    resultCard.classList.add('hidden');
+    resultBody.innerHTML = '';
+    logBox.textContent = '';
+
+    try {
+      // 1. FFmpegのロード
+      if (!ffmpeg.isLoaded()) {
+        setProgress('FFmpegモジュールを読み込み中...', 10);
+        await ffmpeg.load();
+      }
+
+      // 2. ファイルを仮想ファイルシステム(FS)に書き込む
+      setProgress('ファイルを読み込み中...', 20);
+      ffmpeg.FS('writeFile', 'input', await fetchFile(targetFile));
+
+      // 3. 動画の長さ(Duration)を取得する
+      setProgress('動画の長さを解析中...', 30);
+      let duration = 0;
+      
+      // 一時的にロガーを乗っ取ってDurationを抽出
+      const originalLogger = ffmpeg.setLogger(({ message }) => {
+        addLog(message);
+        const match = message.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
+        if (match) {
+          duration = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+        }
+      });
+
+      // 解析用に空回しする
+      await ffmpeg.run('-i', 'input');
+      
+      if (duration === 0) {
+        throw new Error("動画の長さを取得できませんでした。");
+      }
+
+      addLog(`[info] 動画の長さ: ${duration}秒`);
+
+      // 4. 分割の計算
+      const targetBytes = targetMB * 1024 * 1024;
+      const bitRate = (targetFile.size * 8) / duration; 
+      const chunkSec = (targetBytes * 8) / bitRate; // 1ファイルあたりの秒数
+      const numParts = Math.ceil(duration / chunkSec);
+      
+      const ext = targetFile.name.split('.').pop();
+      const baseName = targetFile.name.replace(`.${ext}`, '');
+      
+      addLog(`[info] 概算 ${numParts} 分割します (約 ${chunkSec.toFixed(2)} 秒ごと)`);
+
+      // 5. 分割処理の実行
+      for (let i = 0; i < numParts; i++) {
+        const outName = `${baseName}_part${i + 1}.${ext}`;
+        const startSec = i * chunkSec;
+        
+        const pct = 30 + ((i / numParts) * 60);
+        setProgress(`分割中... (${i + 1} / ${numParts})`, pct);
+        addLog(`[split] ${outName} を作成中...`);
+
+        // 高速無劣化カット (-c copy)
+        await ffmpeg.run(
+          '-ss', startSec.toString(),
+          '-i', 'input',
+          '-t', chunkSec.toString(),
+          '-c', 'copy',
+          '-avoid_negative_ts', 'make_zero',
+          outName
+        );
+
+        // 作成したファイルをメモリから取り出す
+        const data = ffmpeg.FS('readFile', outName);
+        createDownloadLink(outName, data);
+
+        // メモリ解放のため仮想ファイルから削除
+        ffmpeg.FS('unlink', outName);
+      }
+
+      // 元ファイルもメモリから削除
+      ffmpeg.FS('unlink', 'input');
+
+      setProgress('完了！', 100);
+      resultCard.classList.remove('hidden');
+
+    } catch (err) {
+      console.error(err);
+      addLog(`[Error] ${err.message}`);
+      setProgress('エラーが発生しました', 0);
+      progFill.style.background = 'red';
+    } finally {
+      splitBtn.disabled = false;
+    }
+  });
+});
