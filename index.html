@@ -1,92 +1,54 @@
-(function () {
-  "use strict";
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>無劣化メディア分割ツール</title>
+  
+  <script src="./coi-serviceworker.js"></script>
+  
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+  
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+    .card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+    .hidden { display: none; }
+    .progress-bar { width: 100%; background: #eee; height: 20px; border-radius: 10px; margin-top: 10px; overflow: hidden; }
+    .progress-fill { width: 0%; background: #4caf50; height: 100%; transition: width 0.3s; }
+    #log-box { width: 100%; height: 150px; background: #222; color: #0f0; font-family: monospace; font-size: 12px; padding: 10px; overflow-y: scroll; box-sizing: border-box; }
+    button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+    button:disabled { background: #aaa; cursor: not-allowed; }
+    input[type="file"] { margin-bottom: 10px; }
+  </style>
+</head>
+<body>
 
-  function $(id) { return document.getElementById(id); }
+  <h2>無劣化メディア分割ツール</h2>
 
-  var fileInput = $("file-input"), mbInput = $("mb-input"), splitBtn = $("split-btn"),
-      progressCard = $("progress-card"), progText = $("prog-text"), progPct = $("prog-pct"),
-      progFill = $("prog-fill"), logBox = $("log-box"), resultCard = $("result-card"),
-      resultBody = $("result-body"), errorCard = $("error-card"), errorBody = $("error-body");
-
-  var ffmpeg = null, ffmpegLoaded = false;
-
-  fileInput.addEventListener("change", function () {
-    var file = fileInput.files[0];
-    if (!file) { $("file-info").classList.remove("show"); return; }
-    $("file-info").textContent = file.name + " (" + (file.size/1024/1024).toFixed(2) + " MB)";
-    $("file-info").classList.add("show");
-  });
-
-  function setProgress(text, pct) {
-    progText.textContent = text;
-    progPct.textContent = Math.round(pct) + "%";
-    progFill.style.width = pct + "%";
-  }
-
-  async function loadFFmpeg() {
-    if (ffmpegLoaded) return;
-    ffmpeg = FFmpeg.createFFmpeg({
-      log: true, // ログを出力するように変更
-      corePath: "./ffmpeg-core.js" // ←ここを自分のサーバー(GitHub)に変更
-    });
-    setProgress("FFmpegをロード中...", 5);
-    await ffmpeg.load();
-    ffmpegLoaded = true;
-  }
-
-  splitBtn.addEventListener("click", async function () {
-    resultCard.classList.remove("show");
-    errorCard.classList.remove("show");
-    logBox.textContent = "";
+  <div class="card">
+    <input type="file" id="file-input" accept="video/*,audio/*">
+    <div id="file-info" class="hidden" style="font-weight: bold; margin-bottom: 10px;"></div>
     
-    var file = fileInput.files[0];
-    var mb = parseInt(mbInput.value, 10);
-    if (!file || !mb) return alert("ファイルとサイズを入力してください");
+    <label>目標サイズ (MB): <input type="number" id="mb-input" value="50" min="1"></label><br><br>
+    
+    <button id="split-btn" disabled>分割を開始する</button>
+  </div>
 
-    splitBtn.disabled = true;
-    progressCard.classList.add("show");
+  <div id="progress-card" class="card hidden">
+    <div>状態: <span id="prog-text">準備中...</span> (<span id="prog-pct">0%</span>)</div>
+    <div class="progress-bar"><div id="prog-fill" class="progress-fill"></div></div>
+  </div>
 
-    try {
-      await loadFFmpeg();
-      
-      setProgress("ファイルを読み込み中...", 15);
-      ffmpeg.FS("writeFile", "input", await FFmpeg.fetchFile(file));
+  <div class="card">
+    <h4>ログ</h4>
+    <div id="log-box"></div>
+  </div>
 
-      // 長さ取得
-      setProgress("情報を取得中...", 25);
-      let duration = 0;
-      ffmpeg.setLogger(({ message }) => {
-        logBox.textContent += message + "\n";
-        logBox.scrollTop = logBox.scrollHeight;
-        const m = message.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
-        if (m) duration = parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-      });
-      await ffmpeg.run("-i", "input");
+  <div id="result-card" class="card hidden">
+    <h4>分割完了！</h4>
+    <div id="result-body"></div>
+  </div>
 
-      const targetBytes = mb * 1024 * 1024;
-      const chunkSec = (targetBytes * 8) / ((file.size * 8) / duration);
-      const numParts = Math.ceil(duration / chunkSec);
-      const ext = file.name.split(".").pop();
-
-      for (let i = 0; i < numParts; i++) {
-        const outName = `part_${i + 1}.${ext}`;
-        setProgress(`分割中... (${i + 1}/${numParts})`, 30 + (i / numParts) * 60);
-        await ffmpeg.run("-ss", (i * chunkSec).toString(), "-i", "input", "-t", chunkSec.toString(), "-c", "copy", outName);
-        
-        const data = ffmpeg.FS("readFile", outName);
-        const url = URL.createObjectURL(new Blob([data.buffer]));
-        const a = document.createElement("a");
-        a.href = url; a.download = outName; a.click();
-      }
-
-      setProgress("完了", 100);
-      resultBody.textContent = numParts + "個に分割しました。";
-      resultCard.classList.add("show");
-    } catch (e) {
-      errorBody.textContent = e.message;
-      errorCard.classList.add("show");
-    } finally {
-      splitBtn.disabled = false;
-    }
-  });
-})();
+  <script src="./app.js"></script>
+</body>
+</html>
