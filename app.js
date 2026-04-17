@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // FFmpeg の初期化（corePath をローカルに固定）
   const ffmpeg = createFFmpeg({
     log: true,
-    corePath: './ffmpeg-core.js?v=2'
+    corePath: './ffmpeg-core.js?v=4'
   });
 
   const fileInput = document.getElementById('file-input');
@@ -83,11 +83,14 @@ document.addEventListener('DOMContentLoaded', () => {
       setProgress('動画の長さを解析中...', 30);
       let duration = 0;
 
-      const originalLogger = ffmpeg.setLogger(({ message }) => {
+      ffmpeg.setLogger(({ message }) => {
         addLog(message);
         const match = message.match(/Duration:\s*(\d+):(\d+):(\d+\.\d+)/);
         if (match) {
-          duration = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+          duration =
+            parseInt(match[1]) * 3600 +
+            parseInt(match[2]) * 60 +
+            parseFloat(match[3]);
         }
       });
 
