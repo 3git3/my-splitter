@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Lossless Video Splitter</title>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .input-box { margin-bottom: 20px; }
+        input { width: 100%; padding: 10px; box-sizing: border-box; margin-top: 5px; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        #progress { margin-top: 20px; font-size: 0.9rem; color: #555; }
+        .result { margin-top: 20px; word-break: break-all; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2>無劣化分割ツール</h2>
+    <div class="input-box">
+        <label>ファイルを選択</label>
+        <input type="file" id="fileInput">
+    </div>
+    <div class="input-box">
+        <label>分割サイズ (MB)</label>
+        <input type="number" id="sizeInput" value="24">
+    </div>
+    <button id="runBtn">分割を実行</button>
+    <div id="progress"></div>
+    <div id="result" class="result"></div>
+</div>
+
+<script>
+    const { FFmpeg } = FFmpegWasm;
+    const { fetchFile, toBlobURL } = FFmpegUtil;
+    let ffmpeg = null;
+
+    const btn = document.getElementById('runBtn');
+    const prog = document.getElementById('progress');
+    const res = document.getElementById('result');
+
+    btn.onclick = async () => {
+        const file = document.getElementById('fileInput').files[0];
+        const mb = document.getElementById('sizeInput').value;
+        if (!file) return alert("ファイルを選択してください");
+
+        btn.disabled = true;
+        prog.innerText = "エンジンの準備中...";
+
+        if (!ffmpeg) {
+            ffmpeg = new FFmpeg();
+            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+            await ffmpeg.load({
+                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            });
+        }
+
+        ffmpeg.on('progress', ({ progress }) => {
+            prog.innerText = `処理中: ${Math.round(progress * 100)}%`;
+        });
+
+        await ffmpeg.writeFile('input', await fetchFile(file));
+        const ext = file.name.split('.').pop();
+
+        await ffmpeg.exec([
+            '-i', 'input', '-f', 'segment',
+            '-segment_size', (mb * 1024 * 1024).toString(),
+            '-c', 'copy', '-reset_timestamps', '1',
+            `part%03d.${ext}`
+        ]);
+
+        const files = await ffmpeg.listDir('/');
+        const zip = new JSZip();
+        res.innerHTML = "完了！ファイルをダウンロードしてください。<br>";
+
+        for (const f of files) {
+            if (f.name.startsWith('part') && !f.isDir) {
+                const data = await ffmpeg.readFile(f.name);
+                zip.file(f.name, data);
+                const url = URL.createObjectURL(new Blob([data]));
+                res.innerHTML += `<a href="${url}" download="${f.name}">${f.name}</a><br>`;
+            }
+        }
+        
+        const zipData = await zip.generateAsync({type: "blob"});
+        const zipUrl = URL.createObjectURL(zipData);
+        res.innerHTML += `<br><a href="${zipUrl}" download="all_files.zip">📁 全てをZIPでダウンロード</a>`;
+        
+        prog.innerText = "終了しました。";
+        btn.disabled = false;
+    };
+</script>
+</body>
+</html>
