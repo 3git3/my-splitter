@@ -4,11 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>無劣化メディア分割ツール</title>
-  
-  <script src="./coi-serviceworker.js"></script>
-  
+
+  <!-- SharedArrayBuffer を有効化する Service Worker -->
+  <script src="./coi-serviceworker.js?v=3"></script>
+
+  <!-- FFmpeg 0.11.6 -->
   <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
-  
+
   <style>
     body { font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
     .card { border: 1px solid #ccc; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
@@ -18,7 +20,6 @@
     #log-box { width: 100%; height: 150px; background: #222; color: #0f0; font-family: monospace; font-size: 12px; padding: 10px; overflow-y: scroll; box-sizing: border-box; }
     button { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
     button:disabled { background: #aaa; cursor: not-allowed; }
-    input[type="file"] { margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -28,9 +29,9 @@
   <div class="card">
     <input type="file" id="file-input" accept="video/*,audio/*">
     <div id="file-info" class="hidden" style="font-weight: bold; margin-bottom: 10px;"></div>
-    
+
     <label>目標サイズ (MB): <input type="number" id="mb-input" value="50" min="1"></label><br><br>
-    
+
     <button id="split-btn" disabled>分割を開始する</button>
   </div>
 
@@ -49,6 +50,6 @@
     <div id="result-body"></div>
   </div>
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=3"></script>
 </body>
 </html>
