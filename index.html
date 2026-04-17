@@ -4,93 +4,331 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>無劣化メディア分割ツール</title>
+
+  <!--
+    【重要】GitHub Pages では SharedArrayBuffer が使えないため、
+    coi-serviceworker.min.js が必要です。
+    初回アクセス時にページが自動リロードされますが正常な動作です。
+  -->
+  <script src="https://unpkg.com/coi-serviceworker@0.1.7/coi-serviceworker.min.js"></script>
+
   <style>
-    :root {
-      --bg: #121212;
-      --surface: #1e1e1e;
-      --on-surface: #e0e0e0;
-      --primary: #bb86fc;
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
+
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --surface2: #242424;
+      --border: #333;
+      --text: #e8e8e8;
+      --text-muted: #888;
+      --accent: #a78bfa;
+      --accent-dark: #7c3aed;
+      --success: #34d399;
+      --error: #f87171;
+    }
+
     body {
       background: var(--bg);
-      color: var(--on-surface);
-      font-family: sans-serif;
-      margin: 0;
-      padding: 20px;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 16px;
     }
+
     .container {
-      max-width: 600px;
-      margin: 0 auto;
+      width: 100%;
+      max-width: 560px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
     }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
     .card {
       background: var(--surface);
-      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    input[type="file"] {
+      background: var(--surface2);
+      border: 1px dashed var(--border);
       border-radius: 8px;
-      margin-bottom: 20px;
-    }
-    input[type="file"], input[type="number"], button {
-      width: 100%;
-      padding: 10px;
-      margin: 10px 0;
-      box-sizing: border-box;
-      background: #333;
-      color: #fff;
-      border: 1px solid #555;
-      border-radius: 4px;
-    }
-    button {
-      background: var(--primary);
-      color: #000;
-      font-weight: bold;
+      padding: 14px;
+      color: var(--text);
+      font-size: 14px;
       cursor: pointer;
+      transition: border-color 0.2s;
+      width: 100%;
     }
-    button:disabled {
-      opacity: 0.5;
+
+    input[type="file"]:hover {
+      border-color: var(--accent);
+    }
+
+    .mb-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    input[type="number"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 16px;
+      font-weight: 600;
+      width: 120px;
+      appearance: textfield;
+      -moz-appearance: textfield;
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+    }
+
+    input[type="number"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .mb-label {
+      font-size: 15px;
+      color: var(--text-muted);
+    }
+
+    .file-info {
+      font-size: 13px;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border-radius: 6px;
+      padding: 8px 12px;
+      display: none;
+    }
+
+    .file-info.visible {
+      display: block;
+    }
+
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 13px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      width: 100%;
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--accent-dark);
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
       cursor: not-allowed;
     }
-    .progress-info {
-      margin-top: 10px;
+
+    .progress-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .progress-status {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       font-size: 14px;
     }
+
+    .progress-text {
+      color: var(--text);
+    }
+
+    .progress-pct {
+      color: var(--accent);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
     .progress-bar {
-      width: 100%;
-      height: 20px;
-      background: #333;
-      border-radius: 10px;
+      height: 6px;
+      background: var(--surface2);
+      border-radius: 99px;
       overflow: hidden;
     }
+
     .progress-fill {
       height: 100%;
-      background: var(--primary);
+      background: linear-gradient(90deg, var(--accent-dark), var(--accent));
+      border-radius: 99px;
       width: 0%;
-      transition: width 0.3s;
+      transition: width 0.3s ease;
+    }
+
+    .log {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'Courier New', monospace;
+      max-height: 120px;
+      overflow-y: auto;
+      background: var(--surface2);
+      border-radius: 6px;
+      padding: 8px 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .result-card {
+      background: var(--surface);
+      border: 1px solid #1e4a3a;
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: none;
+    }
+
+    .result-card.visible {
+      display: block;
+    }
+
+    .result-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--success);
+      margin-bottom: 8px;
+    }
+
+    .result-body {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .error-card {
+      background: var(--surface);
+      border: 1px solid #4a1e1e;
+      border-radius: 12px;
+      padding: 20px 24px;
+      display: none;
+    }
+
+    .error-card.visible {
+      display: block;
+    }
+
+    .error-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--error);
+      margin-bottom: 8px;
+    }
+
+    .error-body {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-family: 'Courier New', monospace;
+      line-height: 1.6;
+      word-break: break-all;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card">
+
+    <div>
       <h1>無劣化メディア分割ツール</h1>
+      <p class="subtitle">mp3 / mp4 / m4a などを、指定した MB サイズに再エンコードなしで分割します</p>
+    </div>
 
-      <label for="fileInput">分割するファイル (mp3/mp4など):</label>
-      <input type="file" id="fileInput" accept=".mp3,.mp4,.m4a,.mkv,.avi">
+    <div class="card">
+      <div class="field">
+        <label for="fileInput">分割するファイル</label>
+        <input type="file" id="fileInput" accept=".mp3,.mp4,.m4a,.mkv,.avi,.wav,.aac,.ogg,.webm">
+        <div class="file-info" id="fileInfo"></div>
+      </div>
 
-      <label for="mbInput">分割サイズ (MB):</label>
-      <input type="number" id="mbInput" value="24" min="1">
+      <div class="field">
+        <label>分割サイズ (MB)</label>
+        <div class="mb-row">
+          <input type="number" id="mbInput" value="24" min="1" max="10000">
+          <span class="mb-label">MB ごとに分割</span>
+        </div>
+      </div>
 
-      <button id="splitBtn">分割開始</button>
+      <button class="btn" id="splitBtn">分割開始</button>
+    </div>
 
-      <div class="progress-info" id="progressInfo">準備中...</div>
+    <div class="progress-card" id="progressCard" style="display:none;">
+      <div class="progress-status">
+        <span class="progress-text" id="progressText">準備中...</span>
+        <span class="progress-pct" id="progressPct">0%</span>
+      </div>
       <div class="progress-bar">
         <div class="progress-fill" id="progressFill"></div>
       </div>
+      <div class="log" id="logBox"></div>
     </div>
+
+    <div class="result-card" id="resultCard">
+      <div class="result-title">✓ 分割完了</div>
+      <div class="result-body" id="resultBody"></div>
+    </div>
+
+    <div class="error-card" id="errorCard">
+      <div class="error-title">エラーが発生しました</div>
+      <div class="error-body" id="errorBody"></div>
+    </div>
+
   </div>
 
-  <!-- ffmpeg.wasm 本体 -->
-  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.4/dist/ffmpeg.min.js"></script>
-  <!-- ffprobe.wasm を利用するための簡易ラッパー -->
-  <script src="https://unpkg.com/@ffmpeg/core@0.12.4/dist/ffmpeg-core.js"></script>
+  <!-- ffmpeg.wasm 0.11.6 (corePath を明示して読み込む) -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
