@@ -2,71 +2,104 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Lossless Splitter Pro (Fixed)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Lossless Splitter</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/coi-serviceworker/0.1.7/coi-serviceworker.min.js"></script>
     
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.min.js"></script>
     <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
     <style>
-        body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 20px; background: #f0f4f8; }
-        .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
-        h1 { font-size: 1.2rem; text-align: center; color: #333; }
-        .input-group { margin-bottom: 20px; }
-        label { display: block; font-size: 0.8rem; font-weight: bold; margin-bottom: 5px; color: #555; }
-        input { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
-        button { width: 100%; padding: 15px; background: #007bff; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 1rem; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        #status { margin-top: 15px; font-size: 0.85rem; color: #007bff; font-weight: bold; text-align: center; }
-        #log { margin-top: 10px; font-size: 10px; color: #888; background: #f9f9f9; padding: 10px; border-radius: 5px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
-        .result { margin-top: 20px; border-top: 1px solid #eee; padding-top: 20px; }
+        :root { --primary: #007aff; --bg: #f5f5f7; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); display: flex; justify-content: center; padding: 20px; }
+        .card { background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); width: 100%; max-width: 450px; }
+        h1 { font-size: 1.4rem; margin-bottom: 20px; text-align: center; color: #1d1d1f; }
+        .group { margin-bottom: 20px; }
+        label { display: block; font-size: 0.8rem; font-weight: bold; margin-bottom: 8px; color: #86868b; }
+        input[type="file"], input[type="number"] { width: 100%; padding: 12px; border: 1px solid #d2d2d7; border-radius: 10px; box-sizing: border-box; font-size: 1rem; }
+        
+        button { width: 100%; padding: 16px; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-bottom: 10px; font-size: 1rem; }
+        #runBtn { background: var(--primary); color: white; }
+        #runBtn:disabled { background: #d2d2d7; cursor: not-allowed; }
+        #zipBtn { background: #34c759; color: white; display: none; }
+
+        /* 進捗表示 */
+        #progressZone { margin-top: 25px; display: none; }
+        .bar-bg { background: #e5e5ea; height: 8px; border-radius: 4px; overflow: hidden; }
+        #bar-fill { background: var(--primary); width: 0%; height: 100%; transition: width 0.3s; }
+        #statusText { font-size: 0.85rem; text-align: center; margin-top: 10px; color: #1d1d1f; font-weight: 500; }
+        
+        #log { margin-top: 15px; font-size: 10px; background: #f5f5f7; padding: 10px; border-radius: 8px; height: 80px; overflow-y: auto; white-space: pre-wrap; color: #86868b; border: 1px solid #e5e5ea; font-family: monospace; }
+        #resultList { margin-top: 20px; }
+        .dl-item { background: #f5f5f7; padding: 10px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
+        .dl-item a { color: var(--primary); text-decoration: none; font-weight: bold; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h1>無劣化分割（エラー修正版）</h1>
-    <div class="input-group">
+    <h1>無劣化分割 Pro</h1>
+    
+    <div class="group">
         <label>ファイルを選択</label>
         <input type="file" id="fileInput">
     </div>
-    <div class="input-group">
+
+    <div class="group">
         <label>分割サイズ (MB)</label>
         <input type="number" id="sizeInput" value="24">
     </div>
-    <button id="runBtn">分割を開始する</button>
 
-    <div id="status">待機中</div>
-    <div id="log">ログ: 準備完了</div>
-    <div id="result" class="result"></div>
+    <button id="runBtn">分割を開始する</button>
+    <button id="zipBtn">一括ZIPダウンロード</button>
+
+    <div id="progressZone">
+        <div class="bar-bg"><div id="bar-fill"></div></div>
+        <div id="statusText">準備中...</div>
+        <div id="log">ログ: 待機中</div>
+    </div>
+
+    <div id="resultList"></div>
 </div>
 
 <script>
     const { FFmpeg } = FFmpegWasm;
     const { fetchFile, toBlobURL } = FFmpegUtil;
+    
     let ffmpeg = null;
+    let splitBlobs = []; // ZIP用
 
     const btn = document.getElementById('runBtn');
-    const status = document.getElementById('status');
+    const zipBtn = document.getElementById('zipBtn');
+    const status = document.getElementById('statusText');
+    const bar = document.getElementById('bar-fill');
     const logEl = document.getElementById('log');
-    const res = document.getElementById('result');
+    const resList = document.getElementById('resultList');
 
-    const addLog = (m) => { logEl.innerText += `\n${m}`; logEl.scrollTop = logEl.scrollHeight; };
+    const addLog = (m) => { logEl.innerText += `\n> ${m}`; logEl.scrollTop = logEl.scrollHeight; };
 
     btn.onclick = async () => {
         const file = document.getElementById('fileInput').files[0];
         const mb = document.getElementById('sizeInput').value;
-        if (!file) return alert("ファイルを選んでね");
+        if (!file) return alert("ファイルを選択してください");
 
         btn.disabled = true;
-        status.innerText = "エンジン起動中...";
-        res.innerHTML = "";
+        zipBtn.style.display = 'none';
+        resList.innerHTML = '';
+        splitBlobs = [];
+        document.getElementById('progressZone').style.display = 'block';
 
         try {
             if (!ffmpeg) {
                 ffmpeg = new FFmpeg();
-                // ログを画面に出す
                 ffmpeg.on('log', ({ message }) => addLog(message));
-                
+                ffmpeg.on('progress', ({ progress }) => {
+                    const p = Math.round(progress * 100);
+                    bar.style.width = p + '%';
+                    status.innerText = `処理中: ${p}%`;
+                });
+
                 const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
                 await ffmpeg.load({
                     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
@@ -74,36 +107,61 @@
                 });
             }
 
-            status.innerText = "データ読み込み中...";
+            status.innerText = "ファイルを読み込み中...";
             await ffmpeg.writeFile('input', await fetchFile(file));
 
-            status.innerText = "分割中...（無劣化）";
+            status.innerText = "無劣化分割を実行中...";
             const ext = file.name.split('.').pop();
-            
+
             await ffmpeg.exec([
-                '-i', 'input', '-f', 'segment',
+                '-i', 'input', 
+                '-f', 'segment', 
                 '-segment_size', (mb * 1024 * 1024).toString(),
-                '-c', 'copy', '-reset_timestamps', '1',
-                `output_%03d.${ext}`
+                '-c', 'copy', 
+                '-reset_timestamps', '1', 
+                `part_%03d.${ext}`
             ]);
 
-            status.innerText = "完了！";
+            status.innerText = "完了しました！";
             const files = await ffmpeg.listDir('/');
+            
             for (const f of files) {
-                if (f.name.startsWith('output_') && !f.isDir) {
+                if (f.name.startsWith('part_') && !f.isDir) {
                     const data = await ffmpeg.readFile(f.name);
-                    const url = URL.createObjectURL(new Blob([data.buffer]));
-                    res.innerHTML += `<a href="${url}" download="split_${f.name}" style="display:block; margin-bottom:10px; color:#007bff; font-weight:bold;">💾 ${f.name} を保存</a>`;
+                    const blob = new Blob([data.buffer], { type: 'application/octet-stream' });
+                    splitBlobs.push({ name: f.name, data: blob });
+
+                    const url = URL.createObjectURL(blob);
+                    const div = document.createElement('div');
+                    div.className = 'dl-item';
+                    div.innerHTML = `<span>${f.name}</span><a href="${url}" download="split_${f.name}">保存</a>`;
+                    resList.appendChild(div);
                 }
             }
+
+            if (splitBlobs.length > 0) zipBtn.style.display = 'block';
+
         } catch (e) {
             addLog("エラー: " + e.message);
-            status.innerText = "失敗しました";
+            status.innerText = "エラーが発生しました";
+            console.error(e);
         } finally {
             btn.disabled = false;
         }
     };
-</script>
 
+    zipBtn.onclick = async () => {
+        const zip = new JSZip();
+        splitBlobs.forEach(b => zip.file(b.name, b.data));
+        status.innerText = "ZIPを作成中...";
+        const content = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = "all_split_files.zip";
+        a.click();
+        status.innerText = "ZIPダウンロード開始";
+    };
+</script>
 </body>
 </html>
